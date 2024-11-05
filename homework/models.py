@@ -102,27 +102,25 @@ class Detector(torch.nn.Module):
             in_channels: int, number of input channels
             num_classes: int
         """
-        super().__init__()
-
         self.register_buffer("input_mean", torch.as_tensor(INPUT_MEAN))
         self.register_buffer("input_std", torch.as_tensor(INPUT_STD))
 
         # Down-sampling layers
-        self.down1 = self.conv_block(in_channels, 16)  # (B, 3) -> (B, 16, 48, 64)
-        self.down2 = self.conv_block(16, 32)  # (B, 16, 48, 64) -> (B, 32, 24, 32)
-        self.down3 = self.conv_block(32, 64)  # (B, 32, 24, 32) -> (B, 64, 12, 16)
-        self.down4 = self.conv_block(64, 128)  # (B, 64, 12, 16) -> (B, 128, 6, 8)
-        self.down5 = self.conv_block(128, 256)  # (B, 128, 6, 8) -> (B, 256, 3, 4)
+        self.down1 = self.conv_block(in_channels, 16)
+        self.down2 = self.conv_block(16, 32)
+        self.down3 = self.conv_block(32, 64)
+        self.down4 = self.conv_block(64, 128)
+        self.down5 = self.conv_block(128, 256)
 
         # Up-sampling layers
-        self.up1 = self.upconv_block(256, 128)  # (B, 256, 3, 4) -> (B, 128, 6, 8)
-        self.up2 = self.upconv_block(128 + 128, 64)  # (B, 128 + 128, 6, 8) -> (B, 64, 12, 16)
-        self.up3 = self.upconv_block(64 + 64, 32)  # (B, 64 + 64, 12, 16) -> (B, 32, 24, 32)
-        self.up4 = self.upconv_block(32 + 32, 16)  # (B, 32 + 32, 24, 32) -> (B, 16, 48, 64)
-        self.up5 = self.upconv_block(16 + 16, 16)  # (B, 16 + 16, 48, 64) -> (B, 16, 96, 128)
+        self.up1 = self.upconv_block(256, 128)
+        self.up2 = self.upconv_block(128 + 128, 64)
+        self.up3 = self.upconv_block(64 + 64, 32)
+        self.up4 = self.upconv_block(32 + 32, 16)
+        self.up5 = self.upconv_block(16 + 16, 16)
 
         # Output layers
-        self.logits = nn.Conv2d(16, num_classes, kernel_size=1)  # Output: (B, num_classes, 96, 128)
+        self.logits = nn.Conv2d(16, num_classes, kernel_size=1)
         self.depth = nn.Conv2d(16, 1, kernel_size=1)
 
     def conv_block(self, in_channels, out_channels):
@@ -144,9 +142,18 @@ class Detector(torch.nn.Module):
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Forward pass through the network
+        Used in training, takes an image and returns raw logits and raw depth.
+        This is what the loss functions use as input.
+
+        Args:
+            x (torch.FloatTensor): image with shape (b, 3, h, w) and vals in [0, 1]
+
+        Returns:
+            tuple of (torch.FloatTensor, torch.FloatTensor):
+                - logits (b, num_classes, h, w)
+                - depth (b, h, w)
         """
-        # optional: normalizes the input
+        # Optional: Normalize the input
         z = (x - self.input_mean[None, :, None, None]) / self.input_std[None, :, None, None]
 
         # Down-sampling path
@@ -174,7 +181,6 @@ class Detector(torch.nn.Module):
         depth = raw_depth.squeeze(1)  # (B, 96, 128)
 
         return logits, depth
-
 
     def predict(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
