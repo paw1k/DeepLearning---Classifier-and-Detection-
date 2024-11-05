@@ -113,14 +113,13 @@ class Detector(torch.nn.Module):
         self.down3 = self.conv_block(32, 64)  # (B, 32, 24, 32) -> (B, 64, 12, 16)
         self.down4 = self.conv_block(64, 128)  # (B, 64, 12, 16) -> (B, 128, 6, 8)
         self.down5 = self.conv_block(128, 256)  # (B, 128, 6, 8) -> (B, 256, 3, 4)
-        self.down6 = self.conv_block(256, 512)  # (B, 256, 3, 4) -> (B, 512, 2, 2)  # New Layer
 
         # Up-sampling layers
-        self.up1 = self.upconv_block(512, 256)  # (B, 512, 2, 2) -> (B, 256, 3, 4)
-        self.up2 = self.upconv_block(256 + 256, 128)  # (B, 256 + 256, 3, 4) -> (B, 128, 6, 8)
-        self.up3 = self.upconv_block(128 + 128, 64)  # (B, 128 + 128, 6, 8) -> (B, 64, 12, 16)
-        self.up4 = self.upconv_block(64 + 64, 32)  # (B, 64 + 64, 12, 16) -> (B, 32, 24, 32)
-        self.up5 = self.upconv_block(32 + 32, 16)  # (B, 32 + 32, 24, 32) -> (B, 16, 48, 64)
+        self.up1 = self.upconv_block(256, 128)  # (B, 256, 3, 4) -> (B, 128, 6, 8)
+        self.up2 = self.upconv_block(128 + 128, 64)  # (B, 128 + 128, 6, 8) -> (B, 64, 12, 16)
+        self.up3 = self.upconv_block(64 + 64, 32)  # (B, 64 + 64, 12, 16) -> (B, 32, 24, 32)
+        self.up4 = self.upconv_block(32 + 32, 16)  # (B, 32 + 32, 24, 32) -> (B, 16, 48, 64)
+        self.up5 = self.upconv_block(16 + 16, 16)  # (B, 16 + 16, 48, 64) -> (B, 16, 96, 128)
 
         # Output layers
         self.logits = nn.Conv2d(16, num_classes, kernel_size=1)  # Output: (B, num_classes, 96, 128)
@@ -156,26 +155,26 @@ class Detector(torch.nn.Module):
         down3_out = self.down3(down2_out)  # (B, 64, 12, 16)
         down4_out = self.down4(down3_out)  # (B, 128, 6, 8)
         down5_out = self.down5(down4_out)  # (B, 256, 3, 4)
-        down6_out = self.down6(down5_out)  # (B, 512, 2, 2)  # New Layer
 
         # Up-sampling path with skip connections
-        up1_out = self.up1(down6_out)  # (B, 256, 3, 4)
-        up1_out = torch.cat([up1_out, down5_out], dim=1)  # Concatenate with skip connection
-        up2_out = self.up2(up1_out)  # (B, 128, 6, 8)
-        up2_out = torch.cat([up2_out, down4_out], dim=1)  # Concatenate with skip connection
-        up3_out = self.up3(up2_out)  # (B, 64, 12, 16)
-        up3_out = torch.cat([up3_out, down3_out], dim=1)  # Concatenate with skip connection
-        up4_out = self.up4(up3_out)  # (B, 32, 24, 32)
-        up4_out = torch.cat([up4_out, down2_out], dim=1)  # Concatenate with skip connection
-        up5_out = self.up5(up4_out)  # (B, 16, 48, 64)
+        up1_out = self.up1(down5_out)  # (B, 128, 6, 8)
+        up1_out = torch.cat([up1_out, down4_out], dim=1)  # Concatenate with skip connection
+        up2_out = self.up2(up1_out)  # (B, 64, 12, 16)
+        up2_out = torch.cat([up2_out, down3_out], dim=1)  # Concatenate with skip connection
+        up3_out = self.up3(up2_out)  # (B, 32, 24, 32)
+        up3_out = torch.cat([up3_out, down2_out], dim=1)  # Concatenate with skip connection
+        up4_out = self.up4(up3_out)  # (B, 16, 48, 64)
+        up4_out = torch.cat([up4_out, down1_out], dim=1)  # Concatenate with skip connection
+        up5_out = self.up5(up4_out)  # (B, 16, 96, 128)
 
         # Final output layers
-        logits = self.logits(up5_out)  # (B, num_classes, 96
+        logits = self.logits(up5_out)  # (B, num_classes, 96, 128)
         raw_depth = self.depth(up5_out)  # (B, 1, 96, 128)
 
         depth = raw_depth.squeeze(1)  # (B, 96, 128)
 
         return logits, depth
+
 
     def predict(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
