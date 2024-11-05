@@ -1,112 +1,126 @@
 import argparse
+import time
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 import torch
 import torch.utils.tensorboard as tb
+from matplotlib import pyplot as plt
+import matplotlib.colors as mcolors
 
-from .models import ClassificationLoss, load_model, save_model
-from .utils import load_data
+from homework import load_model
+from homework.datasets.road_dataset import load_data  # Ensure these exist
+from homework.models import save_model
+from homework.metrics import DetectionMetric  # Import your detection metrics
 
-
-def train(
-    exp_dir: str = "logs",
-    model_name: str = "detector",
-    num_epoch: int = 50,
-    lr: float = 1e-3,
-    batch_size: int = 128,
-    seed: int = 2024,
-    **kwargs,
+def train_detection(
+        exp_dir: str = "logs",
+        model_name: str = "detection_model",  # Specify default model name for detection
+        num_epoch: int =20,
+        lr: float = 1e-2,  # A typical learning rate for detection tasks
+        batch_size: int = 64,  # Smaller batch size for detection
+        seed: int = 2024,
+        **kwargs,
 ):
     if torch.cuda.is_available():
         device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+        print("Using MPS (Apple Silicon GPU)")
     else:
         print("CUDA not available, using CPU")
         device = torch.device("cpu")
 
-    # set random seed so each run is deterministic
+    # Set random seed for reproducibility
     torch.manual_seed(seed)
     np.random.seed(seed)
 
-    # directory with timestamp to save tensorboard logs and model checkpoints
+    # Create a directory for saving logs and model checkpoints
     log_dir = Path(exp_dir) / f"{model_name}_{datetime.now().strftime('%m%d_%H%M%S')}"
     logger = tb.SummaryWriter(log_dir)
 
-    # note: the grader uses default kwargs, you'll have to bake them in for the final submission
     model = load_model(model_name, **kwargs)
     model = model.to(device)
     model.train()
 
+    # Load training and validation data
     train_data = load_data("road_data/train", shuffle=True, batch_size=batch_size, num_workers=2)
     val_data = load_data("road_data/val", shuffle=False)
 
-    # create loss function and optimizer
-    loss_func = ClassificationLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)  # You can change to SGD if needed
+    # Define the class weights for segmentation loss
+    class_weights = torch.tensor([1.0, 3.0, 3.0], device=device)  # Adjust weights as needed
+    segmentation_loss = torch.nn.CrossEntropyLoss(weight=class_weights)  # For segmentation task
+    regression_loss = torch.nn.L1Loss()  # Absolute error loss for depth prediction
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
-    global_step = 0
-    metrics = {"train_acc": [], "val_acc": []}
+    # Initialize the learning rate scheduler
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3, verbose=True)
 
-    # training loop
+    # Initialize the metric object for tracking detection performance
+    metrics = DetectionMetric(num_classes=3)  # Specify the number of classes as needed
+
+    # Training loop
     for epoch in range(num_epoch):
-        # clear metrics at beginning of epoch
-        for key in metrics:
-            metrics[key].clear()
+        metrics.reset()  # Reset metrics for the new epoch
 
-        model.train()
+        model.train()  # Set the model to training mode
+        start_time = time.time()  # Start time for the epoch
 
-        for img, label in train_data:
-            img, label = img.to(device), label.to(device)
+        for batch in train_data:
+            img, label, depth_label = batch['image'], batch['track'], batch['depth']
+            img, label, depth_label = img.to(device), label.to(device), depth_label.to(device)
 
-            # TODO: implement training step
-            # Implement training step
-            optimizer.zero_grad()  # Clear gradients
-            outputs = model(img)  # Forward pass
-            loss = loss_func(outputs, label)  # Compute loss
-            loss.backward()  # Backpropagation
+            # Forward pass
+            preds, depth_preds = model(img)  # Assuming the model returns both preds and depth preds
+
+            # Calculate the loss
+            seg_loss = segmentation_loss(preds, label)  # Cross-entropy loss for segmentation
+            reg_loss = regression_loss(depth_preds, depth_label)  # Regression loss for depth
+            loss_val = seg_loss + reg_loss  # Combine both losses
+
+            optimizer.zero_grad()  # Zero gradients
+            loss_val.backward()  # Backward pass
             optimizer.step()  # Update weights
 
-            # Compute training accuracy
-            preds = torch.argmax(outputs, dim=1)
-            train_accuracy = (preds == label).float().mean().item()
-            metrics["train_acc"].append(train_accuracy)
+            # Update metrics
+            metrics.add(preds.argmax(dim=1), label, depth_preds, depth_label)  # Assuming preds are logits
 
-            global_step += 1
-
-        # disable gradient computation and switch to evaluation mode
+        # Disable gradient computation for validation
         with torch.inference_mode():
-            model.eval()
+            model.eval()  # Set model to evaluation mode
 
-            for img, label in val_data:
-                img, label = img.to(device), label.to(device)
+            for batch in val_data:
+                img, label, depth_label = batch['image'], batch['track'], batch['depth']
+                img, label, depth_label = img.to(device), label.to(device), depth_label.to(device)
 
-                # TODO: compute validation accuracy
-                # Compute validation accuracy
-                outputs = model(img)  # Forward pass
-                preds = torch.argmax(outputs, dim=1)
-                val_accuracy = (preds == label).float().mean().item()
-                metrics["val_acc"].append(val_accuracy)
+                preds, depth_preds = model(img)
+                metrics.add(preds.argmax(dim=1), label, depth_preds, depth_label)
 
-        # log average train and val accuracy to tensorboard
-        epoch_train_acc = torch.as_tensor(metrics["train_acc"]).mean()
-        epoch_val_acc = torch.as_tensor(metrics["val_acc"]).mean()
-        logger.add_scalar("train/accuracy", epoch_train_acc, epoch)
-        logger.add_scalar("val/accuracy", epoch_val_acc, epoch)
+        # Compute metrics
+        metrics_dict = metrics.compute()
 
+        # Log metrics
+        logger.add_scalar("train/loss", loss_val.item(), epoch)
+        logger.add_scalar("train/iou", metrics_dict["iou"], epoch)
+        logger.add_scalar("train/accuracy", metrics_dict["accuracy"], epoch)
 
-        # print on first, last, every 10th epoch
-        if epoch == 0 or epoch == num_epoch - 1 or (epoch + 1) % 10 == 0:
-            print(
-                f"Epoch {epoch + 1:2d} / {num_epoch:2d}: "
-                f"train_acc={epoch_train_acc:.4f} "
-                f"val_acc={epoch_val_acc:.4f}"
-            )
+        # Calculate the time taken for the epoch
+        elapsed_time = time.time() - start_time  # Get the elapsed time
+        print(
+            f"Epoch {epoch + 1:2d}/{num_epoch:2d}: "
+            f"loss={loss_val:.4f}, "
+            f"iou={metrics_dict['iou']:.4f}, "
+            f"accuracy={metrics_dict['accuracy']:.4f}, "
+            f"time={elapsed_time:.2f}s"  # Display the elapsed time
 
-    # save and overwrite the model in the root directory for grading
+        )
+
+        # Update learning rate based on validation loss
+        val_loss = metrics_dict.get("val_loss", loss_val.item())  # Use current loss if val_loss is not available
+        scheduler.step(val_loss)
+
     save_model(model)
-
-    # save a copy of model weights in the log directory
     torch.save(model.state_dict(), log_dir / f"{model_name}.th")
     print(f"Model saved to {log_dir / f'{model_name}.th'}")
 
@@ -116,13 +130,9 @@ if __name__ == "__main__":
 
     parser.add_argument("--exp_dir", type=str, default="logs")
     parser.add_argument("--model_name", type=str, required=True)
-    parser.add_argument("--num_epoch", type=int, default=50)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--num_epoch", type=int, default=20)
+    parser.add_argument("--lr", type=float, default=1e-2)
     parser.add_argument("--seed", type=int, default=2024)
 
-    # optional: additional model hyperparamters
-    parser.add_argument("--num_layers", type=int, default=4)
-    # parser.add_argument("--num_layers", type=int, default=3)  # Uncommented for additional hyperparameter
-
-    # pass all arguments to train
-    train(**vars(parser.parse_args()))
+    # Pass all arguments to train
+    train_detection(**vars(parser.parse_args()))

@@ -6,21 +6,25 @@ import numpy as np
 import torch
 import torch.utils.tensorboard as tb
 
-from .models import ClassificationLoss, load_model, save_model
-from .utils import load_data
+from homework import load_model
+from homework.datasets.classification_dataset import load_data, ClassificationLoss, compute_accuracy
+from homework.models import save_model
 
 
-def train(
+def train_classification(
     exp_dir: str = "logs",
-    model_name: str = "classifier",
-    num_epoch: int = 50,
-    lr: float = 1e-3,
-    batch_size: int = 128,
+    model_name: str = "linear",
+    num_epoch: int = 42,
+    lr: float = 1e-2,
+    batch_size: int = 256,
     seed: int = 2024,
     **kwargs,
 ):
     if torch.cuda.is_available():
         device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+        print("Using MPS(Apple Silicon GPU)")
     else:
         print("CUDA not available, using CPU")
         device = torch.device("cpu")
@@ -43,7 +47,8 @@ def train(
 
     # create loss function and optimizer
     loss_func = ClassificationLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)  # You can change to SGD if needed
+    # optimizer = ...
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     global_step = 0
     metrics = {"train_acc": [], "val_acc": []}
@@ -59,18 +64,11 @@ def train(
         for img, label in train_data:
             img, label = img.to(device), label.to(device)
 
-            # TODO: implement training step
-            # Implement training step
-            optimizer.zero_grad()  # Clear gradients
-            outputs = model(img)  # Forward pass
-            loss = loss_func(outputs, label)  # Compute loss
-            loss.backward()  # Backpropagation
-            optimizer.step()  # Update weights
-
-            # Compute training accuracy
-            preds = torch.argmax(outputs, dim=1)
-            train_accuracy = (preds == label).float().mean().item()
-            metrics["train_acc"].append(train_accuracy)
+            loss_val = loss_func(model(img), label)
+            optimizer.zero_grad()
+            loss_val.backward()
+            optimizer.step()
+            #print(loss_val.item())
 
             global_step += 1
 
@@ -81,27 +79,23 @@ def train(
             for img, label in val_data:
                 img, label = img.to(device), label.to(device)
 
-                # TODO: compute validation accuracy
-                # Compute validation accuracy
-                outputs = model(img)  # Forward pass
-                preds = torch.argmax(outputs, dim=1)
-                val_accuracy = (preds == label).float().mean().item()
-                metrics["val_acc"].append(val_accuracy)
+                val_acc = compute_accuracy(model(img), label)
+                metrics["val_acc"].append(val_acc.item())
 
         # log average train and val accuracy to tensorboard
         epoch_train_acc = torch.as_tensor(metrics["train_acc"]).mean()
         epoch_val_acc = torch.as_tensor(metrics["val_acc"]).mean()
+
+        # raise NotImplementedError("Logging not implemented")
         logger.add_scalar("train/accuracy", epoch_train_acc, epoch)
         logger.add_scalar("val/accuracy", epoch_val_acc, epoch)
 
 
-        # print on first, last, every 10th epoch
-        if epoch == 0 or epoch == num_epoch - 1 or (epoch + 1) % 10 == 0:
-            print(
-                f"Epoch {epoch + 1:2d} / {num_epoch:2d}: "
-                f"train_acc={epoch_train_acc:.4f} "
-                f"val_acc={epoch_val_acc:.4f}"
-            )
+        print(
+            f"Epoch {epoch + 1:2d} / {num_epoch:2d}: "
+            f"train_acc={epoch_train_acc:.4f} "
+            f"val_acc={epoch_val_acc:.4f}"
+        )
 
     # save and overwrite the model in the root directory for grading
     save_model(model)
@@ -116,13 +110,14 @@ if __name__ == "__main__":
 
     parser.add_argument("--exp_dir", type=str, default="logs")
     parser.add_argument("--model_name", type=str, required=True)
-    parser.add_argument("--num_epoch", type=int, default=50)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--num_epoch", type=int, default=42)
+    parser.add_argument("--lr", type=float, default=1e-2)
     parser.add_argument("--seed", type=int, default=2024)
+    #parser.add_argument("--num_layers", type=int, default=4)
+
 
     # optional: additional model hyperparamters
-    parser.add_argument("--num_layers", type=int, default=4)
-    # parser.add_argument("--num_layers", type=int, default=3)  # Uncommented for additional hyperparameter
+    # parser.add_argument("--num_layers", type=int, default=3)
 
     # pass all arguments to train
-    train(**vars(parser.parse_args()))
+    train_classification(**vars(parser.parse_args()))
