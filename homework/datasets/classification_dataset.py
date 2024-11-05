@@ -1,11 +1,11 @@
 import csv
 from pathlib import Path
 
+import torch
 from PIL import Image
+from torch import nn as nn
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
-import torch
-import torch.nn as nn
 
 LABEL_NAMES = ["background", "kart", "pickup", "nitro", "bomb", "projectile"]
 
@@ -38,15 +38,14 @@ class SuperTuxDataset(Dataset):
             xform = transforms.ToTensor()
         elif transform_pipeline == "aug":
             # TODO: construct your custom augmentation
-            # Custom augmentation pipeline
-            xform = transforms.Compose([
-                transforms.RandomHorizontalFlip(p=0.5),  # Randomly flip images horizontally
-                transforms.RandomRotation(degrees=15),   # Random rotation within +/- 15 degrees
-                transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=[0.2788, 0.2657, 0.2629], std=[0.2064, 0.1944, 0.2252]),
-            ])
-
+            xform = transforms.Compose(
+                [
+                    transforms.RandomHorizontalFlip(),  # Randomly flip images
+                    transforms.RandomRotation(10),  # Randomly rotate by up to 10 degrees
+                    transforms.ColorJitter(brightness=0.1, contrast=0.1),  # Random brightness/contrast
+                    transforms.ToTensor(),
+                ]
+            )
 
         if xform is None:
             raise ValueError(f"Invalid transform {transform_pipeline} specified!")
@@ -105,30 +104,10 @@ def load_data(
 
 class ClassificationLoss(nn.Module):
     def forward(self, logits: torch.Tensor, target: torch.LongTensor) -> torch.Tensor:
-        """
-        Multi-class classification loss
-        Hint: simple one-liner
-
-        Args:
-            logits: tensor (b, c) logits, where c is the number of classes
-            target: tensor (b,) labels
-
-        Returns:
-            tensor, scalar loss
-        """
         return nn.CrossEntropyLoss()(logits, target)
 
 
-
 def compute_accuracy(outputs: torch.Tensor, labels: torch.Tensor):
-        """
-        Arguments:
-            outputs: torch.Tensor, shape (b, num_classes) either logits or probabilities
-            labels: torch.Tensor, shape (b,) with the ground truth class labels
+    outputs_idx = outputs.max(1)[1].type_as(labels)
 
-        Returns:
-            a single torch.Tensor scalar
-        """
-        outputs_idx = outputs.max(1)[1].type_as(labels)
-
-        return (outputs_idx == labels).float().mean()
+    return (outputs_idx == labels).float().mean()
