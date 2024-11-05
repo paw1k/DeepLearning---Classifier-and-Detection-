@@ -4,6 +4,8 @@ from pathlib import Path
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
+import torch
+import torch.nn as nn
 
 LABEL_NAMES = ["background", "kart", "pickup", "nitro", "bomb", "projectile"]
 
@@ -99,3 +101,34 @@ def load_data(
         shuffle=shuffle,
         drop_last=True,
     )
+
+
+class ClassificationLoss(nn.Module):
+    def forward(self, logits: torch.Tensor, target: torch.LongTensor) -> torch.Tensor:
+        """
+        Multi-class classification loss
+        Hint: simple one-liner
+
+        Args:
+            logits: tensor (b, c) logits, where c is the number of classes
+            target: tensor (b,) labels
+
+        Returns:
+            tensor, scalar loss
+        """
+        return nn.CrossEntropyLoss()(logits, target)
+
+
+
+def compute_accuracy(outputs: torch.Tensor, labels: torch.Tensor):
+        """
+        Arguments:
+            outputs: torch.Tensor, shape (b, num_classes) either logits or probabilities
+            labels: torch.Tensor, shape (b,) with the ground truth class labels
+
+        Returns:
+            a single torch.Tensor scalar
+        """
+        outputs_idx = outputs.max(1)[1].type_as(labels)
+
+        return (outputs_idx == labels).float().mean()
