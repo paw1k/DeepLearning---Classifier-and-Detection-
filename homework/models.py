@@ -166,22 +166,17 @@ class Detector(torch.nn.Module):
         down3_out = self.down3(down2_out)  # (B, 64, 12, 16)
         down4_out = self.down4(down3_out)  # (B, 128, 6, 8)
         down5_out = self.down5(down4_out)  # (B, 256, 3, 4)
-        down6_out = self.down6(down5_out)  # (B, 512, 2, 2) - New down-sampling layer
-        down7_out = self.down7(down6_out)  # (B, 512, 1, 1) - New down-sampling layer
 
         # Up-sampling path with skip connections
-        up1_out = self.up1(down7_out)  # (B, 256, 2, 2)
-        up1_out = torch.cat([up1_out, down6_out], dim=1)  # Concatenate with skip connection
-        up2_out = self.up2(up1_out)  # (B, 128, 3, 4)
-        up2_out = torch.cat([up2_out, down5_out], dim=1)  # Concatenate with skip connection
-        up3_out = self.up3(up2_out)  # (B, 64, 6, 8)
-        up3_out = torch.cat([up3_out, down4_out], dim=1)  # Concatenate with skip connection
-        up4_out = self.up4(up3_out)  # (B, 32, 12, 16)
-        up4_out = torch.cat([up4_out, down3_out], dim=1)  # Concatenate with skip connection
-        up5_out = self.up5(up4_out)  # (B, 16, 24, 32)
-        up5_out = torch.cat([up5_out, down2_out], dim=1)  # Concatenate with skip connection
-        up6_out = self.up6(up5_out)  # (B, 16, 48, 64)
-        up6_out = torch.cat([up6_out, down1_out], dim=1)  # Concatenate with skip connection
+        up1_out = self.up1(down5_out)  # (B, 128, 6, 8)
+        up1_out = torch.cat([up1_out, down4_out], dim=1)  # Concatenate with skip connection
+        up2_out = self.up2(up1_out)  # (B, 64, 12, 16)
+        up2_out = torch.cat([up2_out, down3_out], dim=1)  # Concatenate with skip connection
+        up3_out = self.up3(up2_out)  # (B, 32, 24, 32)
+        up3_out = torch.cat([up3_out, down2_out], dim=1)  # Concatenate with skip connection
+        up4_out = self.up4(up3_out)  # (B, 16, 48, 64)
+        up4_out = torch.cat([up4_out, down1_out], dim=1)  # Concatenate with skip connection
+        up5_out = self.up5(up4_out)  # (B, 16, 96, 128)
 
         # Final output layers
         logits = self.logits(up5_out)  # (B, num_classes, 96, 128)
